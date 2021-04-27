@@ -10,6 +10,7 @@ import pickle
 from collections import defaultdict
 
 
+
 class Infinite_buying:
 
     def __init__(self,
@@ -124,10 +125,10 @@ class Infinite_buying:
             self.current_data = {
                 "buy_order_uuid": {},
                 "sell_order_uuid": {},
-                "bought_under_avg_price": defaultdict(bool),
+                "bought_second": defaultdict(bool),
                 "day_count": defaultdict(int),
-                "period_count": 0,
-                "minimum_price": float("inf")
+                "period_count": defaultdict(int),
+                "minimum_price": {}
             }
 
     # 호가 단위를 받아옴
@@ -169,10 +170,8 @@ class Infinite_buying:
 
     # 걸려 있는 매도 주문 취소(남아 있다면)
     def cancel_sell_order(self, coin):
-        self.update_balances()
-        if self.upbit.get_order(coin) and self.current_data["sell_order_uuid"] in [order["uuid"] for order in
-                                                                                   self.upbit.get_order(coin)]:
-            order = self.upbit.cancel_order(self.current_data["sell_order_uuid"])
+        if coin in self.current_data["sell_order_uuid"] and self.current_data["sell_order_uuid"][coin] in [order["uuid"] for order in self.upbit.get_order(coin)]:
+            order = self.upbit.cancel_order(self.current_data["sell_order_uuid"][coin])
             if self.verbose:
                 print("매도주문취소", order)
             self.current_data["sell_order_uuid"].pop(coin)
@@ -180,10 +179,11 @@ class Infinite_buying:
     # 일정 비율 이상 수익일 때 전량 매도를 걸어 놓는 함수
     def sell_order_on_threshold(self, coin):
         self.update_balances()
-        sell_price = self.set_price_according_to_unit(
-            float(self.balances_dict[coin]["avg_buy_price"]) * self.sell_threshold)
-        self.current_data["sell_order_uuid"][coin] = \
-            self.upbit.sell_limit_order(coin, sell_price, float(self.balances_dict[coin]["balance"]))["uuid"]
+        self.cancel_sell_order(coin)
+        time.sleep(3)
+        print(float(self.balances_dict[coin]["avg_buy_price"]) * self.sell_threshold)
+        sell_price = self.set_price_according_to_unit(float(self.balances_dict[coin]["avg_buy_price"]) * self.sell_threshold)
+        self.current_data["sell_order_uuid"][coin] = self.upbit.sell_limit_order(coin, sell_price, float(self.balances_dict[coin]["balance"]))["uuid"]
         if self.verbose:
             print("전량매도주문 at", sell_price)
 
@@ -218,6 +218,8 @@ class Infinite_buying:
 
                 # 절반은 무조건 구매
                 buy_order = self.upbit.buy_market_order(coin,self.minimum_buying_amount)
+                buy_order_uuid[coin] = buy_order["uuid"]
+                period_count[coin] = 0
                 if self.verbose:
                     print("절반 구매")
                     print(buy_order)
@@ -230,7 +232,7 @@ class Infinite_buying:
             else:
                 #걸려 있는 매수주문 취소(남아 있다면)
                 self.cancel_and_buy_if_not_concluded(coin)
-                period_count = 0
+                period_count[coin] = 0
 
             # 구매가 반영되기까지 잠시 기다림
             time.sleep(2)
@@ -248,7 +250,7 @@ class Infinite_buying:
             "bought_under_avg_price": bought_under_avg_price,
             "day_count": day_count,
             "period_count": period_count,
-            "minimum_price": float("inf")
+            "minimum_price": {}
         }
         self.write_data()
 
@@ -270,10 +272,11 @@ class Infinite_buying:
                     print(coin + "잔고가 현재 없습니다.")
                 continue
 
-            # 현재가가 평단 아래일 경우 (시장가로 주문할 때 시차로 인해 평단보다 높게 구매하는 일이 발생할 수 있기 때문에, 2*호가단위의 여유분을 둔다).
+            # 현재가가 평단 아래일 경우 (시장가로 주문할 때 시차로 인해 평단보다 높게 구매하는 일이 발생할 수 있기 때문에, 4*호가단위의 여유분을 둔다).
             avg_price = round(float(self.balances_dict[coin]["avg_buy_price"]))
             price_unit = self.get_price_unit(avg_price)
-            if pyupbit.get_current_price(coin) < avg_price - 2 * price_unit:
+            yeyoo = 4 if coin != "KRW-BTC" else 8
+            if pyupbit.get_current_price(coin) < avg_price - yeyoo * price_unit:
 
                 self.upbit.buy_market_order(coin, self.minimum_buying_amount)
 
@@ -281,7 +284,7 @@ class Infinite_buying:
                 time.sleep(2)
 
                 # 10%에 매도 주문을 새로 걸어 놓음
-                self.sell_order_on_threshold(self.upbit, coin)
+                self.sell_order_on_threshold(coin)
 
                 # 오늘은 더 이상 사지 않도록 표시
                 bought_under_avg_price[coin] = True
@@ -293,14 +296,17 @@ class Infinite_buying:
                 print(coin + "은 현재 가격이 평균단가 이상입니다.")
 
 
-            if period_count >= see_until and not buy_order_uuid[coin]:
-                buy_order_uuid[coin] = self.upbit.buy_limit_order(coin,minimum_price,self.minimum_buying_amount/minimum_price)
+            if period_count[coin] >= see_until and not buy_order_uuid[coin]:
+                buy_order_uuid[coin] = self.upbit.buy_limit_order(coin,minimum_price[coin],self.minimum_buying_amount/minimum_price[coin])
                 if self.verbose:
-                    print(coin + "을 " + str(minimum_price) + "에 주문을 걸었습니다.")
+                    print(coin + "을 " + str(minimum_price[coin]) + "에 주문을 걸었습니다.")
 
             else:
-                period_count += 1
-            print("period_count",period_count)
+                if not coin in minimum_price:
+                    minimum_price[coin] = float("inf")
+                minimum_price[coin] = min(minimum_price[coin],pyupbit.get_current_price(coin))
+                period_count[coin] += 1
+            print(coin, "period_count", period_count[coin])
 
         self.current_data = {
             "buy_order_uuid": buy_order_uuid,
@@ -308,7 +314,7 @@ class Infinite_buying:
             "bought_under_avg_price": bought_under_avg_price,
             "day_count": day_count,
             "period_count": period_count,
-            "minimum_price": float("inf")
+            "minimum_price": minimum_price
         }
         self.write_data()
 
