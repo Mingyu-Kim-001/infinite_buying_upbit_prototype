@@ -130,6 +130,7 @@ class Infinite_buying:
 
         # update balances
         balances = self.upbit.get_balances()
+        self.current_data["balances"] = {}
         for balance in balances:
             self.current_data["balances"][balance["unit_currency"] + "-" + balance["currency"]] = balance
 
@@ -234,7 +235,7 @@ class Infinite_buying:
             if self.verbose:
                 print(coin)
 
-            # 남아 있는 매수 혹은 매도 주문이 걸려 있다면, 취소
+            # 남아 있는 매도 주문이 걸려 있다면, 취소
             self.cancel_sell_order(coin)
 
             time.sleep(1)
@@ -244,28 +245,31 @@ class Infinite_buying:
             if not coin in self.current_data["balances"] or self.current_data["balances"][coin]["balance"] + \
                     self.current_data["balances"][coin]["locked"] == 0:
                 self.current_data["day_count"][coin] = 0
+                self.cancel_buy_order(coin)
 
                 # 절반은 무조건 구매
                 buy_order = self.upbit.buy_market_order(coin, self.minimum_buying_amount)
                 if self.verbose:
-                    print(coin, self.minimum_buying_amount, "원(하루 절반) 구매")
+                    print(coin, "첫 시작 :", self.minimum_buying_amount, "원(하루 절반) 구매")
                     print(buy_order)
-                time.sleep(1)
-
-            # 리셋 주기에 도달했을 시 시장가에 전부 매도.
-            elif self.current_data["day_count"][coin] == self.reset_period:
-                self.get_current_data()
-                sell_quantity = float(self.current_data["balances"][coin]["balance"])
-                sell_order = self.upbit.sell_market_order(coin, sell_quantity)
-                if self.verbose:
-                    print("리셋 주기 도달, ", sell_order)
-                self.current_data["day_count"][coin] = 0
-                time.sleep(1)
+                time.sleep(2)
 
             else:
+
+                # 리셋 주기에 도달했을 시 시장가에 전부 매도.
+                if self.current_data["day_count"][coin] == self.reset_period:
+                    self.get_current_data()
+                    sell_quantity = float(self.current_data["balances"][coin]["balance"])
+                    sell_order = self.upbit.sell_market_order(coin, sell_quantity)
+                    if self.verbose:
+                        print("리셋 주기 도달, ", sell_order)
+                    self.current_data["day_count"][coin] = 0
+                    time.sleep(1)
+
                 # 매수주문 취소하고 시장가에 매수
+                print(coin, self.current_data["day_count"][coin], "일차")
                 self.buy_if_not_concluded(coin)
-                time.sleep(1)
+                time.sleep(2)
 
             # 10%에 매도 주문을 걸어 놓음
             self.sell_order_on_threshold(coin)
@@ -275,6 +279,9 @@ class Infinite_buying:
             self.current_data["bought_first"][coin] = False
             self.current_data["bought_second"][coin] = False  # 추후에 batch_per_10에서 절반을 구매하기 위해, 구매상태를 false로 변경한다.
             self.current_data["period_count"][coin] = 0
+
+            if self.verbose:
+                print("")
 
     # 술탄의 딸 method
     def buy_first(self, coin, big_period, small_period):
@@ -314,9 +321,9 @@ class Infinite_buying:
         self.get_current_data()
         if self.current_data["bought_second"][coin] or not coin in self.current_data["balances"]:
             if self.current_data["bought_second"][coin]:
-                print(coin + "은 이미 평균단가 이하에 절반치를 구매하였습니다.")
+                print(coin + "은 이미 평균단가 이하에 절반치를 구매하였습니다.\n")
             else:
-                print(coin + "잔고가 현재 없습니다.")
+                print(coin, "잔고가 현재 없습니다.\n")
             # continue
             return
 
@@ -348,14 +355,16 @@ class Infinite_buying:
 
 
         elif self.verbose:
-            print(coin + "은 현재 가격", current_price, "이 평균단가", avg_price - yeyoo * price_unit, "이상입니다.")
+            print(coin + "은 현재 가격", current_price, "이 평균단가", avg_price, "이상입니다.")
 
-        print(coin, "period_count", self.current_data["period_count"][coin])
-
-    print("")
+        if self.verbose:
+            print(coin, "period_count", self.current_data["period_count"][coin])
+            print("")
 
     def stop_loss(self, coin, loss_rate=0.1):
         self.get_current_data()
+        if not coin in self.current_data["balances"]:
+            return
         avg_price = round(float(self.current_data["balances"][coin]["avg_buy_price"]))
         current_price = pyupbit.get_current_price(coin)
 
@@ -370,6 +379,10 @@ class Infinite_buying:
             if self.verbose:
                 print(coin, "손절", sell_order)
 
+        elif self.verbose:
+            print(coin, "현재가격", current_price, "가 평균단가의", round(100 * loss_rate), "% 손절라인",
+                  round(avg_price * (1 - loss_rate)), "이상입니다. ")
+
     def check_periodically(self, big_period, small_period):
         for coin in self.coins:
             self.stop_loss(coin)
@@ -378,17 +391,28 @@ class Infinite_buying:
 
     if __name__ == '__main__':
 
-        infinite_buying = Infinite_buying(buying_per_day_per_coin = 10100,
-                                          coins=["KRW-BTC","KRW-XRP"],
-                                          verbose=1)
-        tried = 0
-        while True:
-            if tried % 288 == 0:
-                print("batch_per_day")
-                infinite_buying.batch_per_day()
-            print(tried, ":", datetime.datetime.now())
-            infinite_buying.check_price_periodically()
-            time.sleep(300)
-            tried += 1
+        infinite_buying2 = Infinite_buying(buying_per_day_per_coin=20000,
+                                           coins=["KRW-BTC", "KRW-XRP", "KRW-ETH", "KRW-BCH", "KRW-ETC", "KRW-BTG"],
+                                           sell_threshold=1.15,
+                                           verbose=1)
 
+        big_period = 1440 // 4  # 하루에 총 4번
+        small_period = 6  # 6분마다 체크
+        cur_period = 0전
+
+        while True:
+            print("-------------------------------------------------------------------------------------------")
+            print(cur_period, ":", datetime.datetime.now())
+            print("")
+
+            if cur_period % (big_period // small_period) == 0:
+                print("batch_per_day")
+                infinite_buying2.batch_per_day()
+                print(infinite_buying2.current_data)
+                tried = 0
+            else:
+                infinite_buying2.check_periodically(big_period, small_period)
+
+            time.sleep(small_period * 60 - 12)
+            cur_period += 1
 
