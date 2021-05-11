@@ -20,8 +20,6 @@ class Infinite_buying:
                  coin="KRW-BTC",
                  reset_period=40,
                  sell_threshold=1.1,
-                 big_period=1440,
-                 small_period=6,
                  verbose=0):
 
         self.buying_per_day_per_coin = buying_per_day_per_coin
@@ -30,23 +28,30 @@ class Infinite_buying:
         self.coin = coin
         self.reset_period = reset_period
         self.sell_threshold = sell_threshold
-        self.big_period = big_period
-        self.small_period = small_period
         self.upbit = upbit_api
         self.verbose = verbose
         self.data_file = coin + ".pickle"
         self.check_input()
-        #         self.access_upbit(key_file)
-        self.current_data = {
-            "buy_order_uuid": None,
-            "sell_order_uuid": None,
-            "bought_first": False,
-            "bought_second": False,
-            "day_count": 0,
-            "period_count": 0,
-            "minimum_price": None,
-            "balances": None
-        }
+        self.current_data = self.read_data_file()
+
+    def read_data_file(self):
+
+        current_data = None
+        try:
+            with open(self.data_file, "rb") as f:
+                current_data = pickle.load(f)
+        except:
+            current_data = {
+                "buy_order_uuid": None,
+                "sell_order_uuid": None,
+                "bought_first": False,
+                "bought_second": False,
+                "day_count": 0,
+                "period_count": 0,
+                "minimum_price": None,
+                "balances": None
+            }
+        return current_data
 
     def check_input(self):
 
@@ -263,8 +268,8 @@ class Infinite_buying:
         self.write_data()
 
     # 술탄의 딸 method
-    def buy_first(self):
-        coin, big_period, small_period = self.coin, self.big_period, self.small_period
+    def buy_first(self, big_period, small_period):
+        coin = self.coin
         total_check_count_per_day = big_period // small_period
         see_until = int(total_check_count_per_day / 2.71828)
 
@@ -361,12 +366,13 @@ class Infinite_buying:
             print(coin, "현재가격", current_price, "가 평균단가의", round(100 * loss_rate), "% 손절라인",
                   round(avg_price * (1 - loss_rate)), "이상입니다. ")
 
-    def check_periodically(self):
+    def check_periodically(self, big_period, small_period):
         coin = self.coin
         self.stop_loss()
-        self.buy_first()
+        self.buy_first(big_period, small_period)
         self.buy_second()
         self.write_data()
+
 
     if __name__ == '__main__':
         upbit = access_upbit.access_upbit("key.txt")
@@ -376,12 +382,10 @@ class Infinite_buying:
         infinite_buying["KRW-DOT"] = Infinite_buying(buying_per_day_per_coin=10100,
                                                      coin="KRW-DOT",
                                                      upbit_api=upbit,
-                                                     big_period=big_period,
-                                                     small_period=small_period,
                                                      sell_threshold=1.15,
                                                      verbose=1)
 
-        tried = 0
+        tried = 1
         while True:
             print("-------------------------------------------------------------------------------------------")
             print(tried, ":", datetime.datetime.now())
@@ -394,7 +398,6 @@ class Infinite_buying:
                 tried = 0
             else:
                 for coin in infinite_buying:
-                    infinite_buying[coin].check_periodically()
-            time.sleep(infinite_buying[coin].small_period * 60 - 28)
+                    infinite_buying[coin].check_periodically(big_period, small_period)
+            time.sleep(small_period * 60 - 28)
             tried += 1
-
