@@ -10,6 +10,7 @@ class Infinite_buying:
                  buying_per_day_per_coin,
                  upbit_api,
                  coin="KRW-BTC",
+                 slack=None,
                  reset_period=40,
                  sell_threshold=1.1,
                  stop_loss_rate=0.12,
@@ -23,6 +24,7 @@ class Infinite_buying:
         self.sell_threshold = sell_threshold
         self.stop_loss_rate = stop_loss_rate
         self.upbit = upbit_api
+        self.slack = slack
         self.verbose = verbose
         self.data_file = coin + ".pickle"
         self.check_input()
@@ -87,12 +89,20 @@ class Infinite_buying:
             error_message = "sell_threshold는 1보다 큰 수를 입력해 주시기 바랍니다."
             self.dealing_error(error_message)
 
-    def make_log(self, message):
+    def make_log(self, *args):
         if not self.verbose:
             return
 
+        message = " ".join([str(i) for i in args])
+        if self.slack:
+            self.slack.post_message(message)
+        else:
+            print(message)
+
+
     def dealing_error(self, error_message):
-        print(error_message)
+        self.make_log(error_message)
+        self.make_log("시스템을 종료합니다.")
         sys.exit()
 
     # 현재상황 데이터 읽어오기
@@ -164,8 +174,7 @@ class Infinite_buying:
                                                                                              self.upbit.get_order(
                                                                                                      coin)]:
             order = self.upbit.cancel_order(self.current_data["sell_order_uuid"])
-            if self.verbose:
-                print("매도주문취소")
+            self.make_log("매도주문취소")
 
     # 일정 비율 이상 수익일 때 전량 매도를 걸어 놓는 함수
     def sell_order_on_threshold(self, coin):
@@ -185,8 +194,7 @@ class Infinite_buying:
             error_message = sell_order["error"]["message"]
             self.dealing_error(error_message)
 
-        if self.verbose:
-            print("전량매도주문 at", sell_price)
+        self.make_log("전량매도주문 at {}".format(sell_price))
 
     # 걸려 있는 매수 주문 취소
     def cancel_buy_order(self, coin):
@@ -195,8 +203,7 @@ class Infinite_buying:
                                                                                            self.upbit.get_order(coin)]:
             cancel_order = self.upbit.cancel_order(self.current_data["buy_order_uuid"])
             self.current_data["buy_order_uuid"] = None
-            if self.verbose:
-                print("매수주문취소", cancel_order)
+            self.make_log("매수주문취소 : {}".format(cancel_order))
 
     def buy_if_not_concluded(self, coin):
         self.get_current_data()
@@ -205,8 +212,7 @@ class Infinite_buying:
             self.cancel_buy_order(coin)
             time.sleep(0.5)
             buy_order = self.upbit.buy_market_order(coin, self.minimum_buying_amount)
-            if self.verbose:
-                print("절반 구매", buy_order)
+            self.make_log("절반 구매 : {}".format(buy_order))
 
         # 다음을 위한 세팅
         self.current_data["bought_first"] = False
@@ -215,9 +221,7 @@ class Infinite_buying:
         self.get_current_data()
 
         coin = self.coin
-
-        if self.verbose:
-            print(coin)
+        self.make_log(coin)
 
         # 남아 있는 매도 주문이 걸려 있다면, 취소
         self.cancel_sell_order(coin)
@@ -233,9 +237,8 @@ class Infinite_buying:
 
             # 절반은 무조건 구매
             buy_order = self.upbit.buy_market_order(coin, self.minimum_buying_amount)
-            if self.verbose:
-                print(coin, "첫 시작 :", self.minimum_buying_amount, "원(하루 절반) 구매")
-                print(buy_order)
+            self.make_log("{} 첫 시작 : {} 원(하루 절반) 구매".format(coin,self.minimum_buying_amount))
+            self.make_log(buy_order)
             time.sleep(2)
 
         else:
@@ -245,13 +248,12 @@ class Infinite_buying:
                 self.get_current_data()
                 sell_quantity = float(self.current_data["balances"]["balance"])
                 sell_order = self.upbit.sell_market_order(coin, sell_quantity)
-                if self.verbose:
-                    print("리셋 주기 도달, ", sell_order)
+                self.make_log("리셋 주기 도달 : {}".format(sell_order))
                 self.current_data["day_count"] = 0
                 time.sleep(1)
 
             # 매수주문 취소하고 시장가에 매수
-            print(coin, self.current_data["day_count"], "일차")
+            self.make_log("{} {}일차".format(coin, self.current_data["day_count"]))
             self.buy_if_not_concluded(coin)
             time.sleep(2)
 
@@ -264,9 +266,7 @@ class Infinite_buying:
         self.current_data["bought_second"] = False  # 추후에 batch_per_10에서 절반을 구매하기 위해, 구매상태를 false로 변경한다.
         self.current_data["period_count"] = 0
 
-        if self.verbose:
-            print("")
-
+        self.make_log("")
         self.write_data()
 
     # 술탄의 딸 method
@@ -283,8 +283,7 @@ class Infinite_buying:
                                                                              self.minimum_buying_amount /
                                                                              self.current_data["minimum_price"])
             self.current_data["bought_first"] = True
-            if self.verbose:
-                print(coin + "을 " + str(self.current_data["minimum_price"]) + "에 매수 주문을 걸었습니다.")
+            self.make_log("{} 을 {}에 매수 주문을 걸었습니다.".format(coin,self.current_data["minimum_price"]))
 
         else:
             if self.current_data["period_count"] == 0:
@@ -292,8 +291,8 @@ class Infinite_buying:
             self.current_data["minimum_price"] = min(self.current_data["minimum_price"],
                                                      pyupbit.get_current_price(coin))
             self.current_data["period_count"] += 1
-            if self.verbose and not self.current_data["bought_first"]:
-                print(coin, "최소가격", self.current_data["minimum_price"])
+            if not self.current_data["bought_first"]:
+                self.make_log("{} 최소가격 {}".format(coin, self.current_data["minimum_price"]))
 
     # 평균단가 이하에 절반을 구입하기
     def buy_second(self):
@@ -304,9 +303,9 @@ class Infinite_buying:
         self.get_current_data()
         if self.current_data["bought_second"] or not self.current_data["balances"]:
             if self.current_data["bought_second"]:
-                print(coin + "은 이미 평균단가 이하에 절반치를 구매하였습니다.\n")
+                self.make_log(coin + "은 이미 평균단가 이하에 절반치를 구매하였습니다.\n")
             else:
-                print(coin, "잔고가 현재 없습니다.\n")
+                self.make_log(coin + "잔고가 현재 없습니다.\n")
             # continue
             return
 
@@ -327,8 +326,7 @@ class Infinite_buying:
             # 구매가 반영되기까지 잠시 기다림
             time.sleep(2)
 
-            if self.verbose:
-                print(coin + " 현재가가 평균단가", avg_price, "보다 낮기 때문에 구매하였습니다.", buy_order)
+            self.make_log(coin + " 현재가가 평균단가 " +str(avg_price) + " 보다 낮기 때문에 구매하였습니다." + str(buy_order))
 
             # 10%에 매도 주문을 새로 걸어 놓음
             self.sell_order_on_threshold(coin)
@@ -337,12 +335,9 @@ class Infinite_buying:
             self.current_data["bought_second"] = True
 
 
-        elif self.verbose:
-            print(coin + "은 현재 가격", current_price, "이 평균단가", avg_price, "이상입니다.")
+        else:
+            self.make_log(coin + "은 현재 가격 {} 이 평균단가 {} 이상입니다.\n".format(current_price, avg_price))
 
-        if self.verbose:
-            print(coin, "period_count", self.current_data["period_count"])
-            print("")
 
     def stop_loss(self):
         self.get_current_data()
@@ -361,12 +356,11 @@ class Infinite_buying:
             sell_quantity = float(self.current_data["balances"]["balance"])
             sell_order = self.upbit.sell_market_order(coin, sell_quantity)
 
-            if self.verbose:
-                print(coin, "손절", sell_order)
+            self.make_log(coin + " 손절" + sell_order)
             time.sleep(2)
 
-        elif self.verbose:
-            print(coin, "현재가격", current_price, "가 평균단가", avg_price, "의", round(100 * loss_rate), "% 손절라인",
+        else:
+            self.make_log(coin, "현재가격", current_price, "가 평균단가", avg_price, "의", round(100 * loss_rate), "% 손절라인",
                   round(avg_price * (1 - loss_rate)), "이상입니다. ")
 
     def check_periodically(self, big_period, small_period):
