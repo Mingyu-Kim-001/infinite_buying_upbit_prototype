@@ -2,7 +2,6 @@ import sys
 import pyupbit
 import time
 import pickle
-import utils
 
 class Infinite_buying:
 
@@ -13,7 +12,7 @@ class Infinite_buying:
                  slack=None,
                  reset_period=40,
                  sell_threshold=1.1,
-                 stop_loss_rate=0.12,
+                 stop_loss_rate=0.2,
                  verbose=0):
 
         self.buying_per_day_per_coin = buying_per_day_per_coin
@@ -364,7 +363,6 @@ class Infinite_buying:
                   round(avg_price * (1 - loss_rate)), "이상입니다. ")
 
     def check_periodically(self, big_period, small_period):
-        coin = self.coin
         self.stop_loss()
         self.buy_first(big_period, small_period)
         self.buy_second()
